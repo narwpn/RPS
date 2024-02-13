@@ -2,53 +2,105 @@
 
 pragma solidity >=0.7.0 <0.9.0;
 
-contract RPS {
-    struct Player {
-        uint choice; // 0 - Rock, 1 - Paper , 2 - Scissors, 3 - undefined
-        address addr;
+import "contracts/CommitReveal.sol";
+import "contracts/Ownable.sol";
+
+contract RPS is CommitReveal, Ownable{
+
+    uint public entryFee;
+    address[] public players;
+    mapping(address => bool) public isInGame;
+    mapping(address => uint) public blockNumWhenJoined;
+    mapping(address => uint) public playerChoice;
+    uint numCommited;
+    uint numRevealed;
+    address public winner;
+
+    constructor() {
+        entryFee = 1 wei;
     }
-    uint public numPlayer = 0;
-    uint public reward = 0;
-    mapping (uint => Player) public player;
-    uint public numInput = 0;
+
+    function setEntryFee(uint _entryFee) public onlyOwner {
+        entryFee = _entryFee;
+    }
+
+    modifier onlyPlayers() {
+        require(isInGame[msg.sender]);
+        _;
+    }
 
     function addPlayer() public payable {
-        require(numPlayer < 2);
-        require(msg.value == 1 ether);
-        reward += msg.value;
-        player[numPlayer].addr = msg.sender;
-        player[numPlayer].choice = 3;
-        numPlayer++;
+        require(players.length < 2);
+        require(msg.value == entryFee);
+        players.push(msg.sender);
+        isInGame[msg.sender] = true;
     }
 
-    function input(uint choice, uint idx) public  {
-        require(numPlayer == 2);
-        require(msg.sender == player[idx].addr);
+    function makeChoice(bytes32 choiceHash) public onlyPlayers() {
+        require(players.length == 2);
+        require(commits[msg.sender].commit == 0);
+        commit(choiceHash);
+        numCommited++;
+        if (numCommited == 2) {
+            emit AllPlayersMadeChoice();
+        }
+    }
+
+    event AllPlayersMadeChoice();
+
+    function revealChoice(uint choice, bytes32 salt) public onlyPlayers(){
+        require(players.length == 2);
+        require(numCommited == 2);
+        require(commits[msg.sender].revealed == false);
         require(choice == 0 || choice == 1 || choice == 2);
-        player[idx].choice = choice;
-        numInput++;
-        if (numInput == 2) {
-            _checkWinnerAndPay();
+        revealAnswer(bytes32(choice), salt);
+        playerChoice[msg.sender] = choice;
+        numRevealed++;
+        if (numRevealed == 2) {
+            emit AllPlayersRevealedChoice();
+            _determineWinner();
         }
     }
 
-    function _checkWinnerAndPay() private {
-        uint p0Choice = player[0].choice;
-        uint p1Choice = player[1].choice;
-        address payable account0 = payable(player[0].addr);
-        address payable account1 = payable(player[1].addr);
-        if ((p0Choice + 1) % 3 == p1Choice) {
-            // to pay player[1]
-            account1.transfer(reward);
+    event AllPlayersRevealedChoice();
+
+    function cancelGame() public onlyPlayers() {
+        require(block.number > blockNumWhenJoined[msg.sender] + 250);
+        if (players.length < 2 || numCommited < 2 || numRevealed < 2) {
+            for (uint i = 0; i < players.length; i++) {
+                payable(players[i]).transfer(entryFee);
+                _resetGame();
+            }
         }
-        else if ((p1Choice + 1) % 3 == p0Choice) {
-            // to pay player[0]
-            account0.transfer(reward);    
+    }
+
+    function _resetGame() private {
+        for (uint i = 0; i < players.length; i++) {
+            isInGame[players[i]] = false;
+            blockNumWhenJoined[players[i]] = 0;
+            playerChoice[players[i]] = 0;
         }
-        else {
-            // to split reward
-            account0.transfer(reward / 2);
-            account1.transfer(reward / 2);
+        players = new address[](0);
+        numCommited = 0;
+        numRevealed = 0;
+        winner = address(0);
+    }
+
+    function _determineWinner() private {
+        if (playerChoice[players[0]] == playerChoice[players[1]]) {
+            winner = address(0);
+        } else if (playerChoice[players[0]] == 0 && playerChoice[players[1]] == 2) {
+            winner = players[0];
+        } else if (playerChoice[players[0]] == 1 && playerChoice[players[1]] == 0) {
+            winner = players[0];
+        } else if (playerChoice[players[0]] == 2 && playerChoice[players[1]] == 1) {
+            winner = players[0];
+        } else {
+            winner = players[1];
         }
+        if (winner != address(0)) {
+            payable(winner).transfer(entryFee * 2);
+        }
+        _resetGame();
     }
 }
