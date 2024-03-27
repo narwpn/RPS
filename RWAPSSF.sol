@@ -32,9 +32,11 @@ contract RWAPSSF {
 
     struct Player {
         address addr;
-        bytes32 commit;
+        bytes32 commit1;
+        bytes32 commit2;
         bool revealed;
-        uint num;
+        uint num1;
+        uint num2;
         bool withdrawn;
     }
 
@@ -43,6 +45,7 @@ contract RWAPSSF {
     mapping(address => uint) public playerIndex;
     Player[] public players;
     uint public playersRevealed = 0;
+    uint[] public playerPoints;
     bool public thereIsWinner = false;
     address public winner;
 
@@ -50,68 +53,113 @@ contract RWAPSSF {
         return players;
     }
 
-    event PlayerCommitted(address addr, bytes32 commit);
+    event PlayerCommitted(address addr, bytes32 commit1, bytes32 commit2);
 
-    function commit(bytes32 _commit) public payable {
+    function commit(bytes32 commit1, bytes32 commit2) public payable {
         require(!isPlayer[msg.sender], "Player already commited");
         require(players.length < 2, "Maximum number of players reached");
         require(msg.value == betAmount, "Invalid value");
         isPlayer[msg.sender] = true;
         playerIndex[msg.sender] = players.length;
-        players.push(Player(msg.sender, _commit, false, 0, false));
+        players.push(Player(msg.sender, commit1, commit2, false, 0, 0, false));
         if (players.length == 1) {
             firstCommitTimeStamp = block.timestamp;
         }
-        emit PlayerCommitted(msg.sender, _commit);
+        emit PlayerCommitted(msg.sender, commit1, commit2);
     }
 
-    event PlayerRevealed(address addr, bytes32 commit, uint num, string salt);
+    event PlayerRevealed(
+        address addr,
+        bytes32 commit1,
+        bytes32 commit2,
+        uint num1,
+        uint num2,
+        string salt1,
+        string salt2
+    );
 
-    function reveal(uint num, string memory salt) public {
+    function reveal(
+        uint num1,
+        uint num2,
+        string memory salt1,
+        string memory salt2
+    ) public {
         require(isPlayer[msg.sender], "Player has not commited");
         require(players.length == 2, "Not enough players");
         require(
             !players[playerIndex[msg.sender]].revealed,
             "Player already revealed"
         );
+
         require(
-            keccak256(abi.encodePacked(num, salt)) ==
-                players[playerIndex[msg.sender]].commit,
-            "Invalid reveal"
+            keccak256(abi.encodePacked(num1, salt1)) ==
+                players[playerIndex[msg.sender]].commit1,
+            "Invalid reveal 1"
         );
-        require(num >= 0 && num <= 6, "Invalid number");
+        require(num1 >= 0 && num1 <= 6, "Invalid number 1");
+
+        require(
+            keccak256(abi.encodePacked(num2, salt2)) ==
+                players[playerIndex[msg.sender]].commit2,
+            "Invalid reveal 2"
+        );
+        require(num2 >= 0 && num2 <= 6, "Invalid number 2");
+
         players[playerIndex[msg.sender]].revealed = true;
-        players[playerIndex[msg.sender]].num = num;
+        players[playerIndex[msg.sender]].num1 = num1;
+        players[playerIndex[msg.sender]].num2 = num2;
         playersRevealed++;
         emit PlayerRevealed(
             msg.sender,
-            players[playerIndex[msg.sender]].commit,
-            num,
-            salt
+            players[playerIndex[msg.sender]].commit1,
+            players[playerIndex[msg.sender]].commit2,
+            num1,
+            num2,
+            salt1,
+            salt2
         );
         if (playersRevealed == players.length) {
             determineWinner();
         }
     }
 
-    event Winner(address addr, uint num);
+    event Winner(address addr, uint num1, uint num2);
     event NoWinner();
 
     function determineWinner() private {
         require(playersRevealed == players.length, "Not all players revealed");
-        uint difference = (players[0].num - players[1].num + 7) % 7;
+
+        uint difference = (players[0].num1 - players[1].num1 + 7) % 7;
         if (difference == 1 || difference == 2 || difference == 5) {
+            playerPoints[0] += 2;
+        } else if (difference == 4 || difference == 3 || difference == 6) {
+            playerPoints[1] += 2;
+        } else {
+            playerPoints[0] += 1;
+            playerPoints[1] += 1;
+        }
+
+        difference = (players[0].num2 - players[1].num2 + 7) % 7;
+        if (difference == 1 || difference == 2 || difference == 5) {
+            playerPoints[0] += 2;
+        } else if (difference == 4 || difference == 3 || difference == 6) {
+            playerPoints[1] += 2;
+        } else {
+            playerPoints[0] += 1;
+            playerPoints[1] += 1;
+        }
+
+        if (playerPoints[0] > playerPoints[1]) {
             winner = players[0].addr;
             thereIsWinner = true;
             players[0].withdrawn = true;
             payable(winner).transfer(betAmount * 2);
-            emit Winner(winner, players[0].num);
-        } else if (difference == 4 || difference == 3 || difference == 6) {
+            emit Winner(winner, players[0].num1, players[1].num2);
+        } else if (playerPoints[0] < playerPoints[1]) {
             winner = players[1].addr;
             thereIsWinner = true;
             players[1].withdrawn = true;
             payable(winner).transfer(betAmount * 2);
-            emit Winner(winner, players[1].num);
         } else {
             thereIsWinner = false;
             players[0].withdrawn = true;
@@ -135,6 +183,7 @@ contract RWAPSSF {
         delete firstCommitTimeStamp;
         delete players;
         delete playersRevealed;
+        delete playerPoints;
         delete thereIsWinner;
         delete winner;
     }
